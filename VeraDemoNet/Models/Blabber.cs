@@ -11,5 +11,7 @@ namespace VeraDemoNet.Models
         public int NumberListeners { get; set; }
         public int NumberListening { get; set; }
         public bool Subscribed { get; set; }
+        public string PictureName { get; set; }
+
     }
 }

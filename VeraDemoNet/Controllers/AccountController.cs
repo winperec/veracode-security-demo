@@ -10,8 +10,10 @@ using System.Reflection;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Formatters.Binary;
 using System.Web;
+using System.Web.Helpers;
 using System.Web.Hosting;
 using System.Web.Mvc;
+using System.Web.SessionState;
 using Newtonsoft.Json;
 using VeraDemoNet.DataAccess;
 using VeraDemoNet.Models;
@@ -31,10 +33,9 @@ namespace VeraDemoNet.Controllers
         }
 
         [HttpGet, ActionName("Login")]
-        public ActionResult GetLogin(string ReturnUrl = "")
+        public ActionResult GetLogin()
         {
-            logger.Info("Login page visited: " + ReturnUrl);
-
+            LogoutUser();
             if (IsUserLoggedIn())
             {
                 return GetLogOut();
@@ -48,44 +49,23 @@ namespace VeraDemoNet.Controllers
                 logger.Info("No user cookie");
                 Session["username"] = "";
 
-                ViewBag.ReturnUrl = ReturnUrl;
                 return View();
             }
 
             logger.Info("User details were remembered");
-            var unencodedUserDetails = Convert.FromBase64String(userDetailsCookie.Value);
 
-            CustomSerializeModel deserializedUser;
+            var deserializedUser = JsonConvert.DeserializeObject<CustomSerializeModel>(userDetailsCookie.Value);
 
-            using (MemoryStream memoryStream = new MemoryStream(unencodedUserDetails))
-            {
-                var binaryFormatter = new BinaryFormatter();
+            logger.Info("User details were retrieved for user: " + deserializedUser.UserName);
 
-                // set memory stream position to starting point
-                memoryStream.Position = 0;
-
-                // Deserializes a stream into an object graph and return as a object.
-                /* START BAD CODE */
-                deserializedUser = binaryFormatter.Deserialize(memoryStream) as CustomSerializeModel;
-                /* END BAD CODE */
-                logger.Info("User details were retrieved for user: " + deserializedUser.UserName);
-            }
 
             Session["username"] = deserializedUser.UserName;
 
-            //if (Url.IsLocalUrl(ReturnUrl))  
-            if (string.IsNullOrEmpty(ReturnUrl))
-            {
-                return RedirectToAction("Feed", "Blab");
-            }
-
-            /* START BAD CODE */
-            return Redirect(ReturnUrl);
-            /* END BAD CODE */
+            return RedirectToAction("Feed", "Blab");
         }
 
         [HttpPost, ActionName("Login")]
-        public ActionResult PostLogin(LoginView loginViewModel, string ReturnUrl = "")
+        public ActionResult PostLogin(LoginView loginViewModel)
         {
             try
             {
@@ -93,12 +73,7 @@ namespace VeraDemoNet.Controllers
                 {
                     var userDetails = LoginUser(loginViewModel.UserName, loginViewModel.Password);
 
-                    using (EventLog eventLog = new EventLog("Application"))
-                    {
-                        eventLog.Source = "Application";
-                        eventLog.WriteEntry("Entering PostLogin with target " + ReturnUrl + " and username " + loginViewModel.UserName, EventLogEntryType.Information, 101, 1);
-                    }
-
+                    
                     if (userDetails == null)
                     {
                         ModelState.AddModelError("CustomError", "Something Wrong : UserName or Password invalid ^_^ ");
@@ -113,28 +88,18 @@ namespace VeraDemoNet.Controllers
                             BlabName = userDetails.BlabName,
                             RealName = userDetails.RealName
                         };
+                        
+                        var faCookie =
+                            new HttpCookie(COOKIE_NAME, JsonConvert.SerializeObject(userModel, Formatting.None))
+                            {
+                                Expires = DateTime.Now.AddDays(30)
+                            };
 
-                        using (var userModelStream = new MemoryStream())
-                        {
-                            IFormatter formatter = new BinaryFormatter();
-                            formatter.Serialize(userModelStream, userModel);
-                            var faCookie =
-                                new HttpCookie(COOKIE_NAME, Convert.ToBase64String(userModelStream.GetBuffer()))
-                                {
-                                    Expires = DateTime.Now.AddDays(30)
-                                };
-                            Response.Cookies.Add(faCookie);
-                        }
+                        Response.Cookies.Add(faCookie);
                     }
+                    
+                    return RedirectToAction("Feed", "Blab");
 
-                    if (string.IsNullOrEmpty(ReturnUrl))
-                    {
-                        return RedirectToAction("Feed", "Blab");
-                    }
-
-                    /* START BAD CODE */
-                    return Redirect(ReturnUrl);
-                    /* END BAD CODE */
                 }
             }
             catch (Exception ex)
@@ -199,9 +164,16 @@ namespace VeraDemoNet.Controllers
 
             var oldUsername = GetLoggedInUsername();
             var imageDir = HostingEnvironment.MapPath("~/Images/");
-
+            string oldImage = null;
             using (var dbContext = new BlabberDB())
             {
+                var user = dbContext.Users.FirstOrDefault(t => t.UserName == oldUsername);
+                if (user == null)
+                {
+                    Response.StatusCode = (int)HttpStatusCode.InternalServerError;
+                    return Json(new { message = "User cannot be found." });
+                }
+                oldImage = Path.Combine(imageDir,user.PictureName);
                 var connection = dbContext.Database.Connection;
                 connection.Open();
 
@@ -216,10 +188,7 @@ namespace VeraDemoNet.Controllers
                 if (result == 0)
                 {
                     Response.StatusCode = (int)HttpStatusCode.InternalServerError;
-                    return new JsonResult
-                    {
-                        Data = JsonConvert.DeserializeObject("{\"message\": \"<script>alert('An error occurred, please try again.');</script>\"}")
-                    };
+                    return Json(new { message = "An error occurred, please try again" });
                 }
             }
 
@@ -228,31 +197,22 @@ namespace VeraDemoNet.Controllers
                 if (UsernameExists(userName))
                 {
                     Response.StatusCode = (int) HttpStatusCode.Conflict;
-                    return new JsonResult
-                    {
-                        Data = JsonConvert.DeserializeObject(
-                            "{\"message\": \"<script>alert('That username already exists. Please try another.');</script>\"}")
-                    };
+                    return Json(new { message = "That username already exists. Please try another." });
                 }
-
                 if (!UpdateUsername(oldUsername, userName))
                 {
                     Response.StatusCode = (int) HttpStatusCode.InternalServerError;
-                    return new JsonResult
-                    {
-                        Data = JsonConvert.DeserializeObject(
-                            "{\"message\": \"<script>alert('An error occurred, please try again.');</script>\"}")
-                    };
+                    return Json(new {message = "An error occurred, please try again"});
                 }
-
                 Session["username"] = userName;
             }
 
+            string newFilename = oldImage;
             // Update user profile image
             if (file != null &&  file.ContentLength > 0) 
             {
                 // Get old image name, if any, to delete
-                var oldImage = imageDir + userName + ".png";
+                
                 
                 if (System.IO.File.Exists(oldImage))
                 {
@@ -260,26 +220,38 @@ namespace VeraDemoNet.Controllers
                 }
 		
                 var extension = Path.GetExtension(file.FileName).ToLower();
-                var newFilename = Path.Combine(imageDir, userName);
+                newFilename = Path.Combine(imageDir, Guid.NewGuid().ToString("N"));
                 newFilename += extension;
 
                 logger.Info("Saving new profile image: " + newFilename);
 
                 file.SaveAs(newFilename);
+                using (var dbContext = new BlabberDB())
+                {
+                    var user = dbContext.Users.First(t => t.UserName == userName);
+                    user.PictureName = Path.GetFileName(newFilename);
+                    dbContext.SaveChanges();
+                }
+
             }
 
             Response.StatusCode = (int)HttpStatusCode.OK;
-            var msg = "Successfully changed values!\\\\nusername: {0}\\\\nReal Name: {1}\\\\nBlab Name: {2}";
+            var msg = "Successfully changed values!";
 
-            /* START BAD CODE */
 
-            // Don't forget to escape braces so they're not included in the string.Format
-            var respTemplate = "{{\"values\": {{\"username\": \"{0}\", \"realName\": \"{1}\", \"blabName\": \"{2}\"}}, \"message\": \"<script>alert('"+ msg + "');</script>\"}}";
-
-            // JSON doesn't like single backslashes so escape them?
-            return Content(string.Format(respTemplate, userName.ToLower().Replace("\\", "\\\\"), realName.Replace("\\", "\\\\"), blabName.Replace("\\", "\\\\")), "application/json");
-
-            /* END BAD CODE */
+            var newObject = new
+            {
+                values = new
+                {
+                    picturename = Path.GetFileName(newFilename),
+                    username = userName.ToLower(),
+                    realName = realName,
+                    blabName = blabName
+                },
+                message = msg
+            };
+          
+            return Json(newObject);
         }
 
         [HttpGet, ActionName("PasswordHint")]
@@ -300,15 +272,15 @@ namespace VeraDemoNet.Controllers
                     var match = dbContext.Users.FirstOrDefault(x => x.UserName == userName);
                     if (match == null)
                     {
-                        return Content("No password found for " + userName);
+                        return Content("No password found for " + HttpUtility.HtmlEncode(userName));
                     }
 
                     if (match.PasswordHint == null)
                     {
-                        return Content("Username '" + userName + "' has no password hint!");
+                        return Content("Username '" + HttpUtility.HtmlEncode(userName) + "' has no password hint!");
                     }
 
-                    var formatString = "Username '" + userName + "' has password: {0}";
+                    var formatString = "Username '" + HttpUtility.HtmlEncode(userName) + "' has password: {0}";
                     return Content(string.Format(formatString, match.PasswordHint.Substring(0, 2) + new string('*', match.PasswordHint.Length - 2)));
                 }
             }
@@ -351,16 +323,6 @@ namespace VeraDemoNet.Controllers
                     }
                 }
             }
-
-            var imageDir = HostingEnvironment.MapPath("~/Images/");
-            var oldFilename = Path.Combine(imageDir, oldUsername) + ".png";
-            var newFilename = Path.Combine(imageDir, newUsername) + ".png";
-
-            if (System.IO.File.Exists(oldFilename))
-            {
-                System.IO.File.Move(oldFilename, newFilename);
-            }
-
             return true;
         }
 
@@ -371,21 +333,14 @@ namespace VeraDemoNet.Controllers
             // Check is the username already exists
             using (var dbContext = new BlabberDB())
             {
-                var connection = dbContext.Database.Connection;
-                connection.Open();
-
-                var usernameCheck = connection.CreateCommand();
-
-                usernameCheck.CommandText = "SELECT username FROM users WHERE username=?";
                 var results = dbContext.Users.FirstOrDefault(x => x.UserName == username);
-
                 return results != null;
             }
         }
 
         private void PopulateProfileViewModel(DbConnection connect, string username, ProfileViewModel viewModel)
         {
-            string sqlMyProfile = "SELECT username, real_name, blab_name, is_admin FROM users WHERE username = '" + username + "'";
+            string sqlMyProfile = "SELECT username, real_name, blab_name, is_admin, picture_name FROM users WHERE username = '" + username + "'";
             logger.Info(sqlMyProfile);
 
             using (var eventsCommand = connect.CreateCommand())
@@ -399,27 +354,35 @@ namespace VeraDemoNet.Controllers
                         viewModel.RealName = userProfile.GetString(1);
                         viewModel.BlabName = userProfile.GetString(2);
                         viewModel.IsAdmin = userProfile.GetBoolean(3);
-                        viewModel.Image = GetProfileImageNameFromUsername(viewModel.UserName);
+                        viewModel.Image = GetProfileImageName(userProfile.GetString(4));
                     }
                 }
             }
         }
         
         [HttpGet, ActionName("DownloadProfileImage")]
-	    public ActionResult DownloadProfileImage(string image)
+	    public ActionResult DownloadProfileImage(string userName)
 	    {
-		    logger.Info("Entering downloadImage");
+            if (IsUserLoggedIn() == false)
+            {
+                return RedirectToLogin(HttpContext.Request.RawUrl);
+            }
+            using (var db = new BlabberDB())
+            {
+                var user = db.Users.FirstOrDefault(u => u.UserName == userName);
+                if (user == null)
+                {
+                    return HttpNotFound();
+                }
+                logger.Info("Entering downloadImage");
 
-	        if (IsUserLoggedIn() == false)
-	        {
-	            return RedirectToLogin(HttpContext.Request.RawUrl);
-	        }
+                var imagePath = Path.Combine(HostingEnvironment.MapPath("~/Images/"), user.PictureName);
 
-            var imagePath = Path.Combine(HostingEnvironment.MapPath("~/Images/"), image); 
+                logger.Info("Fetching profile image: " + imagePath);
 
-		    logger.Info("Fetching profile image: " + imagePath);
-
-	        return File(imagePath, System.Net.Mime.MediaTypeNames.Application.Octet);
+                return File(imagePath, System.Net.Mime.MediaTypeNames.Application.Octet);
+            }
+		    
         }
 
         [HttpGet, ActionName("register")]
@@ -438,20 +401,12 @@ namespace VeraDemoNet.Controllers
 
             Session["username"] = username;
 
-            var sql = "SELECT count(*) FROM users WHERE username = @username";
             using (var dbContext = new BlabberDB())
             {
-                var connection = dbContext.Database.Connection;
-                connection.Open();
-                var checkUsername = connection.CreateCommand();
-                checkUsername.CommandText = sql;
-                checkUsername.Parameters.Add(new SqlParameter {ParameterName = "@username", Value = username.ToLower()});
-
-                var numUsernames = checkUsername.ExecuteScalar() as int?;
 
                 registerViewModel.UserName = username;
 
-                if (numUsernames != 0)
+                if (dbContext.Users.Any(t => t.UserName == username))
                 {
                     registerViewModel.Error = "Username '" + username + "' already exists!";
                     return View(registerViewModel);
@@ -461,10 +416,10 @@ namespace VeraDemoNet.Controllers
             }
         }
 
-        private string GetProfileImageNameFromUsername(string viewModelUserName)
+        private string GetProfileImageName(string imageName)
         {
             var imagePath = HostingEnvironment.MapPath("~/Images/");
-            var image =  Directory.EnumerateFiles(imagePath).FirstOrDefault(f => Path.GetFileNameWithoutExtension(f) == viewModelUserName);
+            var image =  Directory.EnumerateFiles(imagePath).FirstOrDefault(f => Path.GetFileName(f) == imageName);
 
             var filename = image == null ? "default_profile.png" : Path.GetFileName(image);
             
@@ -496,10 +451,10 @@ namespace VeraDemoNet.Controllers
             return myEvents;
         }
 
-        private static List<Blabber> RetrieveMyHecklers(DbConnection connect, string username)
+        private List<Blabber> RetrieveMyHecklers(DbConnection connect, string username)
         {
             var hecklers = new List<Blabber>();
-            var sqlMyHecklers = "SELECT users.username, users.blab_name, users.created_at " +
+            var sqlMyHecklers = "SELECT users.username, users.blab_name, users.created_at, users.picture_name " +
                                 "FROM users LEFT JOIN listeners ON users.username = listeners.listener " +
                                 "WHERE listeners.blabber=@blabber AND listeners.status='Active'";
 
@@ -517,7 +472,8 @@ namespace VeraDemoNet.Controllers
                         {
                             UserName = myHecklersResults.GetString(0),
                             BlabName = myHecklersResults.GetString(1),
-                            CreatedDate = myHecklersResults.GetDateTime(2)
+                            CreatedDate = myHecklersResults.GetDateTime(2),
+                            PictureName = myHecklersResults.GetString(3)
                         };
                         hecklers.Add(heckler);
                     }
@@ -536,7 +492,7 @@ namespace VeraDemoNet.Controllers
         }
 
         [HttpPost, ActionName("RegisterFinish")]
-        public ActionResult PostRegisterFinish(User user, string cpassword)
+        public ActionResult PostRegisterFinish([Bind(Include = "UserName,RealName,BlabName")]User user, string cpassword)
         {
             if (user.Password != cpassword)
             {
@@ -551,7 +507,7 @@ namespace VeraDemoNet.Controllers
             }
 
             // Use the user class to get the hashed password.
-            user.Password = Md5Hash(user.Password);
+            user.Password = Crypto.HashPassword(user.Password);
             user.CreatedAt = DateTime.Now;
             
             using (var dbContext = new BlabberDB())

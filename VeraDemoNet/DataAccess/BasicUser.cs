@@ -6,6 +6,7 @@
         public string BlabName { get; set; }
         public string RealName { get; set; }
         public bool IsAdmin { get; set; }
+        public string Password { get; set; }
 
         public BasicUser()
         {

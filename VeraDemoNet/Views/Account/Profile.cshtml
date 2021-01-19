@@ -41,7 +41,7 @@
                                         <input type="file" class="form-control" name="file" />
                                     </div>
                                     <div>
-                                        <a href="downloadprofileimage?image=@(Model.UserName).png">
+                                        <a href="downloadprofileimage?userName=@(Model.UserName)">
                                             Download Current Image
                                         </a>
                                     </div>
@@ -108,7 +108,7 @@
                                 <li>
                                     <div class="clear">
                                         <div class="commenterImage">
-                                            <img src="@(Url.Content("~/Images/" + heckler.UserName  + ".png"))" />
+                                            <img src="@(Url.Content("~/Images/" + heckler.PictureName))" />
                                         </div>
                                         <div class="commentText">
                                             <p> @(heckler.BlabName)</p>
@@ -183,20 +183,20 @@
                             $.each(data.values,
                                 function(key, val) {
                                     $('input[name="' + key + '"]').val(val);
-                                    if (key === "username") {
-                                        $('#profileImage').attr('src', '@(Url.Content("~/Images/"))' + val + '.png');
+                                    if (key === "picturename") {
+                                        $('#profileImage').attr('src', '@(Url.Content("~/Images/"))' + val );
                                     }
                                 });
                         }
                         if ('message' in data) {
-                            $('body').append(data.message);
+                            alert(data.message);
                         }
                     }
                 },
                 error: function(err) {
                     console.log("Form submission error", err);
                     if (err.responseJSON && 'message' in err.responseJSON) {
-                        $('body').append(err.responseJSON.message);
+                        alert(err.responseJSON.message);
                     }
                 }
             });

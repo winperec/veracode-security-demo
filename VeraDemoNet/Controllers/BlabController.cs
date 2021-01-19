@@ -4,6 +4,7 @@ using System.Data.Common;
 using System.Data.SqlClient;
 using System.Reflection;
 using System.Text;
+using System.Web;
 using System.Web.Mvc;
 using VeraDemoNet.Commands;
 using VeraDemoNet.DataAccess;
@@ -34,7 +35,7 @@ namespace VeraDemoNet.Controllers
         private string sqlSearchBlabs =
             "SELECT b.blabber, b.content, b.timestamp " +
             "FROM blabs b " +
-            "WHERE b.content LIKE '%{0}%' " + 
+            "WHERE b.content LIKE @keywords " + 
             "ORDER BY b.timestamp DESC";
         
         private string sqlBlabDetails = 
@@ -91,8 +92,9 @@ namespace VeraDemoNet.Controllers
             using (var dbContext = new BlabberDB())
             {
                 dbContext.Database.Connection.Open();
-                var searchBlabs = dbContext.Database.Connection.CreateCommand();
-                searchBlabs.CommandText = string.Format(sqlSearchBlabs, searchText);
+                var searchBlabs = (SqlCommand)dbContext.Database.Connection.CreateCommand();
+                searchBlabs.CommandText = sqlSearchBlabs;
+                searchBlabs.Parameters.AddWithValue("@keywords", $"%{searchText}%");
                 
                 var searchBlabsResults = searchBlabs.ExecuteReader();
                 while (searchBlabsResults.Read())
@@ -207,7 +209,7 @@ namespace VeraDemoNet.Controllers
                 dbContext.Database.Connection.Open();
                 dbContext.Database.ExecuteSqlCommand(sqlAddBlab, 
                     new SqlParameter{ParameterName = "@username", Value = username},
-                    new SqlParameter{ParameterName = "@blabcontents", Value = blab},
+                    new SqlParameter{ParameterName = "@blabcontents", Value = HttpUtility.HtmlEncode(blab)},
                     new SqlParameter{ParameterName = "@timestamp", Value = DateTime.Now});
             }
 
@@ -294,6 +296,11 @@ namespace VeraDemoNet.Controllers
                 return RedirectToLogin(HttpContext.Request.RawUrl);
             }
 
+            if (command != "ignore" && command != "listen")
+            {
+                return View(new BlabbersViewModel { Error = "Invalid command."});
+
+            }
             var username = GetLoggedInUsername();
 
             try
@@ -303,11 +310,8 @@ namespace VeraDemoNet.Controllers
                     dbContext.Database.Connection.Open();
 
                     var commandType = Type.GetType("VeraDemoNet.Commands." + UpperCaseFirst(command) + "Command");
-
-                    /* START BAD CODE */
                     var cmdObj = (IBlabberCommand) Activator.CreateInstance(commandType, dbContext.Database.Connection, username);
                     cmdObj.Execute(blabberUsername);
-                    /* END BAD CODE */
                 }
             }
             catch (Exception ex)

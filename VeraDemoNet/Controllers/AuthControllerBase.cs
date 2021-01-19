@@ -1,6 +1,8 @@
 ﻿using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Web;
+using System.Web.Helpers;
 using System.Web.Mvc;
 using VeraDemoNet.DataAccess;
 
@@ -17,14 +19,17 @@ namespace VeraDemoNet.Controllers
 
             using (var dbContext = new BlabberDB())
             {
-                var found = dbContext.Database.SqlQuery<BasicUser>(
-                    "select username, real_name as realname, blab_name as blabname, is_admin as isadmin from users where username ='"
-                    + userName + "' and password='" + Md5Hash(passWord) + "';").ToList();
+                
+                var user = dbContext.Users.SingleOrDefault(t => t.UserName == userName);
 
-                if (found.Count != 0)
+                if (user != null)
                 {
-                    Session["username"] = userName;
-                    return found[0];
+                    
+                    if (Crypto.VerifyHashedPassword(user.Password, passWord))
+                    {
+                        Session["username"] = userName;
+                        return new BasicUser(user.UserName, user.BlabName, user.RealName);
+                    }
                 }
             }
 
@@ -38,7 +43,9 @@ namespace VeraDemoNet.Controllers
 
         protected void LogoutUser()
         {
-            Session["username"] = null;
+            Session.Clear();
+            Session.Abandon();
+            HttpContext.Response.Cookies.Add(new HttpCookie("ASP.NET_SessionId", ""));
         }
 
         protected bool IsUserLoggedIn()
@@ -59,25 +66,6 @@ namespace VeraDemoNet.Controllers
                 }));
         }
 
-        protected static string Md5Hash(string input)
-        {
-            var sb = new StringBuilder();
-            if (string.IsNullOrEmpty(input))
-            {
-                return sb.ToString();
-            }
-
-            using (MD5 md5 = MD5.Create())
-            {
-                var retVal = md5.ComputeHash(Encoding.Unicode.GetBytes(input));
-
-                foreach (var t in retVal)
-                {
-                    sb.Append(t.ToString("x2"));
-                }
-            }
-
-            return sb.ToString();
-        }
+     
     }
 }

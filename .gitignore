@@ -261,3 +261,6 @@ __pycache__/
 *.pyc
 /PrecompiledWeb/VeraDemoNet
 /VeraDemoNet/Properties/PublishProfiles/VeracodePrecompileProfile.pubxml
+/VeraDemoNet/Images/**.*
+*.mdf
+*.ldf
